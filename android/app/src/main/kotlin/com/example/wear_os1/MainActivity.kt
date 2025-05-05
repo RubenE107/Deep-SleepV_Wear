@@ -14,12 +14,25 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity(), SensorEventListener {
+    private val envioHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val envioRunnable = object : Runnable {
+    override fun run() {
+        Log.d("BLE_SERVER", "⏩ ENVÍO FIJO: HR=$heartRate, Steps=$stepCount, Temp=36.5")
+        bleServer.updateSensorValues(heartRate, stepCount, 36.5f)
+        envioHandler.postDelayed(this, 100)
+    }
+}
+
+
+
+
     private lateinit var sensorManager: SensorManager
     private var heartRate: Float = -1f
     private var accelX: Float = 0f
     private var accelY: Float = 0f
     private var accelZ: Float = 0f
     private var stepCount: Float = 0f
+    private lateinit var bleServer: BleServerService
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 100
@@ -34,7 +47,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
 
-        // Configuración del canal de comunicación con Flutter
+        // Configuración de canales Flutter
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_NAME)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -45,7 +58,6 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 }
             }
 
-        // Configuración del EventChannel para actualizaciones en tiempo real
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL_NAME)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -59,35 +71,50 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 }
             })
 
-        // Solicitar permisos
+        // Pedir permisos
         checkPermissions()
     }
 
     private fun checkPermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED ||
-                ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val permissionsNeeded = mutableListOf<String>()
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+                permissionsNeeded.add(Manifest.permission.BLUETOOTH_CONNECT)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED)
+                permissionsNeeded.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED)
+                permissionsNeeded.add(Manifest.permission.BODY_SENSORS)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED)
+                permissionsNeeded.add(Manifest.permission.ACTIVITY_RECOGNITION)
 
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(
-                        Manifest.permission.BODY_SENSORS,
-                        Manifest.permission.ACTIVITY_RECOGNITION
-                    ),
-                    PERMISSION_REQUEST_CODE
-                )
+            if (permissionsNeeded.isNotEmpty()) {
+                ActivityCompat.requestPermissions(this, permissionsNeeded.toTypedArray(), PERMISSION_REQUEST_CODE)
             } else {
-                //registerSensors()
+                startSensorsAndBle()
             }
         } else {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(Manifest.permission.BODY_SENSORS),
-                    PERMISSION_REQUEST_CODE
-                )
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BODY_SENSORS), PERMISSION_REQUEST_CODE)
             } else {
-                //registerSensors()
+                startSensorsAndBle()
+            }
+        }
+    }
+
+    private fun startSensorsAndBle() {
+        bleServer = BleServerService(this)
+        bleServer.start()
+        envioHandler.post(envioRunnable)
+        registerSensors()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                startSensorsAndBle()
+            } else {
+                Log.e("PERMISOS", "⛔ Permisos denegados por el usuario")
             }
         }
     }
@@ -110,25 +137,29 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 val value = event.values.getOrNull(0)
                 if (value != null && value >= 0 && !value.isNaN()) {
                     heartRate = value
-                    Log.d("HEART", "💓 Ritmo cardíaco actualizado: $heartRate")
+                    //Log.d("HEART", "💓 Ritmo cardíaco actualizado: $heartRate")
                 }
             }
             Sensor.TYPE_ACCELEROMETER -> {
                 accelX = event.values[0]
                 accelY = event.values[1]
                 accelZ = event.values[2]
-                Log.d("ACCEL", "🏃 Acelerómetro -> X: $accelX, Y: $accelY, Z: $accelZ")
+                //Log.d("ACCEL", "🏃 Acelerómetro -> X: $accelX, Y: $accelY, Z: $accelZ")
             }
             Sensor.TYPE_STEP_COUNTER -> {
                 val steps = event.values.getOrNull(0)
                 if (steps != null && !steps.isNaN()) {
                     stepCount = steps
-                    Log.d("STEPS", "🚶 Pasos contados: $stepCount")
+                    
                 }
             }
         }
 
-        // Enviar datos al EventChannel
+        // 🔄 Enviar datos BLE actualizados al móvil
+        // Log.d("BLE_SERVER", "⏩ Enviando al móvil: HR=$heartRate, Steps=$stepCount, Temp=36.5")
+        // bleServer.updateSensorValues(heartRate, stepCount, 36.5f)
+
+        // 📤 EventChannel para Flutter (vista en el reloj)
         eventSink?.success(
             mapOf(
                 "heartRate" to heartRate,
