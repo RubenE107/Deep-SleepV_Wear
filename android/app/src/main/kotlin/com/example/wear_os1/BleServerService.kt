@@ -45,7 +45,7 @@ class BleServerService(private val context: Context) {
         gattServer?.addService(service)
 
         startAdvertising()
-        Log.d("BLE_SERVER", "🟢 Servidor BLE inicializado")
+        ///Log.d("BLE_SERVER", "🟢 Servidor BLE inicializado")
 
     }
 
@@ -102,7 +102,7 @@ class BleServerService(private val context: Context) {
                 } else {
                     Log.d("BLE_SERVER", "⏳ Esperando conexión para enviar datos BLE")
                 }
-                handler.postDelayed(this, 1000)
+                handler.postDelayed(this, 500)
             }
         })
     }
