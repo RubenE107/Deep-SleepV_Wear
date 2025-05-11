@@ -1,8 +1,10 @@
 package com.example.wear_os1
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -10,12 +12,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
+import android.os.*
 import android.util.Log
-
 
 class SensorService : Service(), SensorEventListener {
     private lateinit var sensorManager: SensorManager
@@ -24,15 +22,20 @@ class SensorService : Service(), SensorEventListener {
     private var accelY: Float = 0f
     private var accelZ: Float = 0f
     private var stepCount: Float = 0f
-    private var ambientTemp: Float = 0f
-    private var light: Float = 0f
 
     private lateinit var bleServer: BleServerService
+    private lateinit var wakeLock: PowerManager.WakeLock
+
     private val envioHandler = Handler(Looper.getMainLooper())
     private val envioRunnable =
             object : Runnable {
                 override fun run() {
-                    bleServer.updateSensorValues(heartRate, stepCount, ambientTemp, accelX, accelY, accelZ, light)
+                    if (heartRate > 0f) {
+                        bleServer.updateSensorValues(heartRate, stepCount, accelX, accelY, accelZ)
+                        Log.d("BLE_SERVER", "📤 Enviando datos con HR: $heartRate")
+                    } else {
+                        Log.d("BLE_SERVER", "⛔ HR inválido, datos no enviados.")
+                    }
                     envioHandler.postDelayed(this, 500)
                 }
             }
@@ -42,11 +45,28 @@ class SensorService : Service(), SensorEventListener {
         private const val NOTIFICATION_ID = 1
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_STICKY
+    }
+
     override fun onCreate() {
         super.onCreate()
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+
+        Log.d("SENSOR_SERVICE", "🟢 onCreate iniciado")
+
         createNotificationChannel()
+        val notification = createNotification()
+
+        Log.d("SENSOR_SERVICE", "🔔 Preparando notificación foreground...")
         startForeground(NOTIFICATION_ID, createNotification())
+        Log.d("SENSOR_SERVICE", "✅ startForeground ejecutado correctamente")
+
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyApp::SensorLock")
+        wakeLock.acquire()
+
         registerSensors()
 
         bleServer = BleServerService(this)
@@ -60,7 +80,7 @@ class SensorService : Service(), SensorEventListener {
                     NotificationChannel(
                             CHANNEL_ID,
                             "Sensor Service",
-                            NotificationManager.IMPORTANCE_LOW
+                            NotificationManager.IMPORTANCE_DEFAULT // IMPORTANTE: NO LOW
                     )
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
@@ -68,27 +88,22 @@ class SensorService : Service(), SensorEventListener {
     }
 
     private fun createNotification(): Notification {
+        val intent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+
         return Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle("Sensores activos")
                 .setContentText("Recopilando datos en segundo plano...")
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
+                .setContentIntent(pendingIntent) // al tocar, abre la app
+                .setOngoing(true) // notificación persistente
                 .build()
     }
-    // Register the sensors
 
     private fun registerSensors() {
         val heartSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
         val accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-        val tempSensor = sensorManager.getDefaultSensor(Sensor.TYPE_AMBIENT_TEMPERATURE)
-        //val lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
-        // pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)
-        // lightSensor?.let {
-        //     sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL))
-        // }
-        tempSensor?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-        }
 
         heartSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
@@ -99,7 +114,6 @@ class SensorService : Service(), SensorEventListener {
         stepSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
-        )
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -110,7 +124,7 @@ class SensorService : Service(), SensorEventListener {
                 val value = event.values.getOrNull(0)
                 if (value != null && value >= 0 && !value.isNaN()) {
                     heartRate = value
-                    Log.d("HEART", "💓 Ritmo cardíaco actualizado: $heartRate")
+                    Log.d("HEART", "💓 HR actualizado: $heartRate")
                 }
             }
             Sensor.TYPE_ACCELEROMETER -> {
@@ -123,24 +137,9 @@ class SensorService : Service(), SensorEventListener {
                 val steps = event.values.getOrNull(0)
                 if (steps != null && !steps.isNaN()) {
                     stepCount = steps
-                    Log.d("STEPS", "🚶 Pasos contados: $stepCount")
+                    Log.d("STEPS", "🚶 Pasos: $stepCount")
                 }
             }
-            Sensor.TYPE_AMBIENT_TEMPERATURE -> {
-                val temp = event.values.getOrNull(0)
-                if (temp != null && !temp.isNaN()) {
-                    ambientTemp = temp
-                    Log.d("TEMP", "🌡️ Temperatura ambiente: $ambientTemp")
-                }
-            }
-            // Sensor.TYPE_LIGHT -> {
-            //     val lightValue = event.values.getOrNull(0)
-            //     if (lightValue != null && !lightValue.isNaN()) {
-            //         light = lightValue
-            //         Log.d("LIGHT", "💡 Luz ambiente: $light")
-            //     }
-            // }
-
         }
     }
 
@@ -151,9 +150,36 @@ class SensorService : Service(), SensorEventListener {
         envioHandler.removeCallbacksAndMessages(null)
         bleServer.stop()
         sensorManager.unregisterListener(this)
+
+        if (::wakeLock.isInitialized && wakeLock.isHeld) {
+            wakeLock.release()
+        }
     }
 
-    override fun onBind(intent: Intent?): IBinder? {
-        return null
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.w("SENSOR_SERVICE", "❗ Servicio fue removido por el sistema, reiniciando...")
+
+        val restartServiceIntent =
+                Intent(applicationContext, SensorService::class.java).also {
+                    it.setPackage(packageName)
+                }
+
+        val restartPendingIntent =
+                PendingIntent.getService(
+                        applicationContext,
+                        1,
+                        restartServiceIntent,
+                        PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.set(
+                AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + 1000,
+                restartPendingIntent
+        )
     }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }
