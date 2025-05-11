@@ -24,12 +24,21 @@ class BleServerService(private val context: Context) {
 
     private var latestHeartRate: Float = 0f
     private var latestSteps: Float = 0f
-    private var latestTemp: Float = 36.5f // Puedes ajustarlo si tienes sensor real
+    private var latestTemp: Float = 0f // Puedes ajustarlo si tienes sensor real
+    private var latesX: Float = 0f // Reemplaza con el valor real del sensor
+    private var latesY: Float = 0f // Reemplaza con el valor real del sensor
+    private var latesZ: Float = 0f // Reemplaza con el valor real del sensor
+    private var latesLight: Float = 0f // Reemplaza con el valor real del sensor
 
-    fun updateSensorValues(hr: Float, steps: Float, temp: Float) {
+    fun updateSensorValues(hr: Float, steps: Float, temp: Float,x: Float, y: Float, z: Float, light: Float) {
         latestHeartRate = hr
         latestSteps = steps
         latestTemp = temp
+        latesX = x
+        latesY = y
+        latesZ = z
+        latesLight = light
+        // Log.d("BLE_SERVER", "Valores actualizados: $latestHeartRate, $latestSteps, $latestTemp")
     }
 
     fun start() {
@@ -93,7 +102,15 @@ class BleServerService(private val context: Context) {
                     val json = JSONObject(mapOf(
                         "heartRate" to latestHeartRate,
                         "steps" to latestSteps,
-                        "temperature" to latestTemp
+                        "temperature" to latestTemp,
+                        "accelerometer" to mapOf(
+                            "x" to latesX,
+                            "y" to latesY,
+                            "z" to latesZ
+                        )
+                        ,
+                        "light" to latesLight
+                        
                     )).toString()
 
                     characteristic.value = json.toByteArray(Charset.forName("UTF-8"))

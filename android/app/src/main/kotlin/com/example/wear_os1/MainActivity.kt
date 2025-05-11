@@ -1,6 +1,7 @@
 package com.example.wear_os1
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.*
 import android.os.Build
@@ -14,25 +15,12 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity(), SensorEventListener {
-    private val envioHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val envioRunnable = object : Runnable {
-    override fun run() {
-        Log.d("BLE_SERVER", "⏩ ENVÍO FIJO: HR=$heartRate, Steps=$stepCount, Temp=36.5")
-        bleServer.updateSensorValues(heartRate, stepCount, 36.5f)
-        envioHandler.postDelayed(this, 100)
-    }
-}
-
-
-
-
     private lateinit var sensorManager: SensorManager
     private var heartRate: Float = -1f
     private var accelX: Float = 0f
     private var accelY: Float = 0f
     private var accelZ: Float = 0f
     private var stepCount: Float = 0f
-    private lateinit var bleServer: BleServerService
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 100
@@ -47,7 +35,6 @@ class MainActivity : FlutterActivity(), SensorEventListener {
 
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
 
-        // Configuración de canales Flutter
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_NAME)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -71,7 +58,6 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 }
             })
 
-        // Pedir permisos
         checkPermissions()
     }
 
@@ -90,29 +76,26 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             if (permissionsNeeded.isNotEmpty()) {
                 ActivityCompat.requestPermissions(this, permissionsNeeded.toTypedArray(), PERMISSION_REQUEST_CODE)
             } else {
-                startSensorsAndBle()
+                startSensors()
             }
         } else {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BODY_SENSORS), PERMISSION_REQUEST_CODE)
             } else {
-                startSensorsAndBle()
+                startSensors()
             }
         }
     }
 
-    private fun startSensorsAndBle() {
-        bleServer = BleServerService(this)
-        bleServer.start()
-        envioHandler.post(envioRunnable)
-        registerSensors()
+    private fun startSensors() {
+        startService(Intent(this, SensorService::class.java))
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
             if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                startSensorsAndBle()
+                startSensors()
             } else {
                 Log.e("PERMISOS", "⛔ Permisos denegados por el usuario")
             }
@@ -137,29 +120,21 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 val value = event.values.getOrNull(0)
                 if (value != null && value >= 0 && !value.isNaN()) {
                     heartRate = value
-                    //Log.d("HEART", "💓 Ritmo cardíaco actualizado: $heartRate")
                 }
             }
             Sensor.TYPE_ACCELEROMETER -> {
                 accelX = event.values[0]
                 accelY = event.values[1]
                 accelZ = event.values[2]
-                //Log.d("ACCEL", "🏃 Acelerómetro -> X: $accelX, Y: $accelY, Z: $accelZ")
             }
             Sensor.TYPE_STEP_COUNTER -> {
                 val steps = event.values.getOrNull(0)
                 if (steps != null && !steps.isNaN()) {
                     stepCount = steps
-                    
                 }
             }
         }
 
-        // 🔄 Enviar datos BLE actualizados al móvil
-        // Log.d("BLE_SERVER", "⏩ Enviando al móvil: HR=$heartRate, Steps=$stepCount, Temp=36.5")
-        // bleServer.updateSensorValues(heartRate, stepCount, 36.5f)
-
-        // 📤 EventChannel para Flutter (vista en el reloj)
         eventSink?.success(
             mapOf(
                 "heartRate" to heartRate,

@@ -11,8 +11,11 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
+
 
 class SensorService : Service(), SensorEventListener {
     private lateinit var sensorManager: SensorManager
@@ -21,6 +24,18 @@ class SensorService : Service(), SensorEventListener {
     private var accelY: Float = 0f
     private var accelZ: Float = 0f
     private var stepCount: Float = 0f
+    private var ambientTemp: Float = 0f
+    private var light: Float = 0f
+
+    private lateinit var bleServer: BleServerService
+    private val envioHandler = Handler(Looper.getMainLooper())
+    private val envioRunnable =
+            object : Runnable {
+                override fun run() {
+                    bleServer.updateSensorValues(heartRate, stepCount, ambientTemp, accelX, accelY, accelZ, light)
+                    envioHandler.postDelayed(this, 500)
+                }
+            }
 
     companion object {
         private const val CHANNEL_ID = "sensor_service_channel"
@@ -33,15 +48,20 @@ class SensorService : Service(), SensorEventListener {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
         registerSensors()
+
+        bleServer = BleServerService(this)
+        bleServer.start()
+        envioHandler.post(envioRunnable)
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Sensor Service",
-                NotificationManager.IMPORTANCE_LOW
-            )
+            val channel =
+                    NotificationChannel(
+                            CHANNEL_ID,
+                            "Sensor Service",
+                            NotificationManager.IMPORTANCE_LOW
+                    )
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
@@ -49,20 +69,37 @@ class SensorService : Service(), SensorEventListener {
 
     private fun createNotification(): Notification {
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Sensores activos")
-            .setContentText("Recopilando datos en segundo plano...")
-            .setSmallIcon(android.R.drawable.ic_menu_compass)
-            .build()
+                .setContentTitle("Sensores activos")
+                .setContentText("Recopilando datos en segundo plano...")
+                .setSmallIcon(android.R.drawable.ic_menu_compass)
+                .build()
     }
+    // Register the sensors
 
     private fun registerSensors() {
         val heartSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
         val accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val stepSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        val tempSensor = sensorManager.getDefaultSensor(Sensor.TYPE_AMBIENT_TEMPERATURE)
+        //val lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
+        // pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)
+        // lightSensor?.let {
+        //     sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL))
+        // }
+        tempSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
 
-        heartSensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
-        accelSensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
-        stepSensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+        heartSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+        accelSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+        stepSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+        )
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -89,6 +126,21 @@ class SensorService : Service(), SensorEventListener {
                     Log.d("STEPS", "🚶 Pasos contados: $stepCount")
                 }
             }
+            Sensor.TYPE_AMBIENT_TEMPERATURE -> {
+                val temp = event.values.getOrNull(0)
+                if (temp != null && !temp.isNaN()) {
+                    ambientTemp = temp
+                    Log.d("TEMP", "🌡️ Temperatura ambiente: $ambientTemp")
+                }
+            }
+            // Sensor.TYPE_LIGHT -> {
+            //     val lightValue = event.values.getOrNull(0)
+            //     if (lightValue != null && !lightValue.isNaN()) {
+            //         light = lightValue
+            //         Log.d("LIGHT", "💡 Luz ambiente: $light")
+            //     }
+            // }
+
         }
     }
 
@@ -96,6 +148,8 @@ class SensorService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        envioHandler.removeCallbacksAndMessages(null)
+        bleServer.stop()
         sensorManager.unregisterListener(this)
     }
 
