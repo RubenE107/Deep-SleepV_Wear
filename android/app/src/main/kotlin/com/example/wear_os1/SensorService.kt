@@ -1,11 +1,9 @@
 package com.example.wear_os1
 
-import android.app.AlarmManager
-import android.app.Notification
+import android.app.Service
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
+import android.app.Notification
 import android.content.Context
 import android.content.Intent
 import android.hardware.Sensor
@@ -27,78 +25,53 @@ class SensorService : Service(), SensorEventListener {
     private lateinit var wakeLock: PowerManager.WakeLock
 
     private val envioHandler = Handler(Looper.getMainLooper())
-    private val envioRunnable =
-            object : Runnable {
-                override fun run() {
-                    if (heartRate > 0f) {
-                        bleServer.updateSensorValues(heartRate, stepCount, accelX, accelY, accelZ)
-                        Log.d("BLE_SERVER", "📤 Enviando datos con HR: $heartRate")
-                    } else {
-                        Log.d("BLE_SERVER", "⛔ HR inválido, datos no enviados.")
-                    }
-                    envioHandler.postDelayed(this, 500)
-                }
+    private val envioRunnable = object : Runnable {
+        override fun run() {
+            if (heartRate > 0f) {
+                bleServer.updateSensorValues(heartRate, stepCount, accelX, accelY, accelZ)
+                Log.d("BLE_SERVER", "📤 Enviando datos con HR: $heartRate")
             }
-
-    companion object {
-        private const val CHANNEL_ID = "sensor_service_channel"
-        private const val NOTIFICATION_ID = 1
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-
-        Log.d("SENSOR_SERVICE", "🟢 onCreate iniciado")
-
-        createNotificationChannel()
-        val notification = createNotification()
-
-        Log.d("SENSOR_SERVICE", "🔔 Preparando notificación foreground...")
-        startForeground(NOTIFICATION_ID, createNotification())
-        Log.d("SENSOR_SERVICE", "✅ startForeground ejecutado correctamente")
-
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyApp::SensorLock")
-        wakeLock.acquire()
-
-        registerSensors()
-
-        bleServer = BleServerService(this)
-        bleServer.start()
-        envioHandler.post(envioRunnable)
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel =
-                    NotificationChannel(
-                            CHANNEL_ID,
-                            "Sensor Service",
-                            NotificationManager.IMPORTANCE_DEFAULT // IMPORTANTE: NO LOW
-                    )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager?.createNotificationChannel(channel)
+            envioHandler.postDelayed(this, 500)
         }
     }
 
-    private fun createNotification(): Notification {
-        val intent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+    override fun onCreate() {
+    super.onCreate()
 
-        return Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("Sensores activos")
-                .setContentText("Recopilando datos en segundo plano...")
-                .setSmallIcon(android.R.drawable.ic_menu_compass)
-                .setContentIntent(pendingIntent) // al tocar, abre la app
-                .setOngoing(true) // notificación persistente
-                .build()
+    Log.d("SENSOR_SERVICE", "🟢 onCreate iniciado")
+
+    // Crear canal para foreground service
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
+            "sensor_service_channel",
+            "Sensor Service",
+            NotificationManager.IMPORTANCE_LOW
+        )
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(channel)
     }
+
+    // Notificación obligatoria
+    val notification = Notification.Builder(this, "sensor_service_channel")
+        .setContentTitle("⏱️ Servicio de sensores")
+        .setContentText("En ejecución...")
+        .setSmallIcon(android.R.drawable.stat_notify_sync)
+        .build()
+
+    startForeground(1, notification) // 👈 IMPORTANTE
+
+    // WakeLock para que no se duerma
+    val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+    wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MyApp::SensorLock")
+    wakeLock.acquire()
+
+    sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    registerSensors()
+
+    bleServer = BleServerService(this)
+    bleServer.start()
+    envioHandler.post(envioRunnable)
+}
 
     private fun registerSensors() {
         val heartSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
@@ -120,66 +93,31 @@ class SensorService : Service(), SensorEventListener {
         if (event == null) return
 
         when (event.sensor.type) {
-            Sensor.TYPE_HEART_RATE -> {
-                val value = event.values.getOrNull(0)
-                if (value != null && value >= 0 && !value.isNaN()) {
-                    heartRate = value
-                    Log.d("HEART", "💓 HR actualizado: $heartRate")
-                }
+            Sensor.TYPE_HEART_RATE -> event.values.getOrNull(0)?.takeIf { it >= 0 && !it.isNaN() }?.let {
+                heartRate = it
             }
             Sensor.TYPE_ACCELEROMETER -> {
                 accelX = event.values[0]
                 accelY = event.values[1]
                 accelZ = event.values[2]
-                Log.d("ACCEL", "🏃 Acelerómetro -> X: $accelX, Y: $accelY, Z: $accelZ")
             }
-            Sensor.TYPE_STEP_COUNTER -> {
-                val steps = event.values.getOrNull(0)
-                if (steps != null && !steps.isNaN()) {
-                    stepCount = steps
-                    Log.d("STEPS", "🚶 Pasos: $stepCount")
-                }
+            Sensor.TYPE_STEP_COUNTER -> event.values.getOrNull(0)?.takeIf { !it.isNaN() }?.let {
+                stepCount = it
             }
         }
     }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     override fun onDestroy() {
         super.onDestroy()
         envioHandler.removeCallbacksAndMessages(null)
         bleServer.stop()
         sensorManager.unregisterListener(this)
-
         if (::wakeLock.isInitialized && wakeLock.isHeld) {
             wakeLock.release()
         }
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        Log.w("SENSOR_SERVICE", "❗ Servicio fue removido por el sistema, reiniciando...")
-
-        val restartServiceIntent =
-                Intent(applicationContext, SensorService::class.java).also {
-                    it.setPackage(packageName)
-                }
-
-        val restartPendingIntent =
-                PendingIntent.getService(
-                        applicationContext,
-                        1,
-                        restartServiceIntent,
-                        PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-                )
-
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.set(
-                AlarmManager.ELAPSED_REALTIME,
-                SystemClock.elapsedRealtime() + 1000,
-                restartPendingIntent
-        )
-    }
-
     override fun onBind(intent: Intent?): IBinder? = null
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
 }

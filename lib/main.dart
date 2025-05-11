@@ -27,8 +27,8 @@ class SensorHomePage extends StatefulWidget {
 }
 
 class _SensorHomePageState extends State<SensorHomePage> {
-  static const EventChannel _eventChannel =
-      EventChannel('com.example.watch/sensorUpdates');
+  static const MethodChannel _methodChannel = MethodChannel('com.example.flutter/notify');
+  static const EventChannel _eventChannel = EventChannel('com.example.watch/sensorUpdates');
 
   String _heartRate = "Cargando...";
   String _accelerometer = "Cargando...";
@@ -40,25 +40,32 @@ class _SensorHomePageState extends State<SensorHomePage> {
     _listenToSensorUpdates();
   }
 
-  void _listenToSensorUpdates() {
-  _eventChannel.receiveBroadcastStream().listen((event) {
+  Future<void> _enviarNotificacion() async {
     try {
-      setState(() {
-        _heartRate = "${event['heartRate']?.toStringAsFixed(1) ?? 'N/A'} bpm";
-        final accel = event['accelerometer'];
-        _accelerometer = accel != null
-            ? "x: ${accel['x']?.toStringAsFixed(2)}, y: ${accel['y']?.toStringAsFixed(2)}, z: ${accel['z']?.toStringAsFixed(2)}"
-            : "No disponible";
-        _steps = "${event['steps']?.toInt() ?? 'N/A'} pasos";
-      });
+      await _methodChannel.invokeMethod("showNotification");
     } catch (e) {
-      print("Error procesando los datos: $e");
+      print("❌ Error al enviar notificación: $e");
     }
-  }, onError: (error) {
-    print("Error al recibir datos de los sensores: $error");
-  });
-}
+  }
 
+  void _listenToSensorUpdates() {
+    _eventChannel.receiveBroadcastStream().listen((event) {
+      try {
+        setState(() {
+          _heartRate = "${event['heartRate']?.toStringAsFixed(1) ?? 'N/A'} bpm";
+          final accel = event['accelerometer'];
+          _accelerometer = accel != null
+              ? "x: ${accel['x']?.toStringAsFixed(2)}, y: ${accel['y']?.toStringAsFixed(2)}, z: ${accel['z']?.toStringAsFixed(2)}"
+              : "No disponible";
+          _steps = "${event['steps']?.toInt() ?? 'N/A'} pasos";
+        });
+      } catch (e) {
+        print("Error procesando los datos: $e");
+      }
+    }, onError: (error) {
+      print("Error al recibir datos de los sensores: $error");
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +86,7 @@ class _SensorHomePageState extends State<SensorHomePage> {
           ),
         ),
       ),
+      
     );
   }
 }
